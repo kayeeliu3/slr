@@ -169,3 +169,7 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+/src/temp_paper.pdf
+/src/node_modules/
+/src/package-lock.json

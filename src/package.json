@@ -1,0 +1,19 @@
+{
+  "name": "",
+  "version": "",
+  "private": true,
+  "devDependencies": {
+    "@vue/cli-plugin-babel": "^3.12.1",
+    "@vue/cli-plugin-eslint": "^5.0.8",
+    "@vue/cli-service": "^3.3.1",
+    "tailwindcss": "^3.4.17"
+  },
+  "dependencies": {
+    "@tailwindcss/cli": "^4.0.9",
+    "@tailwindcss/vite": "^4.0.5",
+    "flowbite": "^3.1.2",
+    "vue": "^3.5.13"
+  },
+  "readme": "ERROR: No README data found!",
+  "_id": "@"
+}
