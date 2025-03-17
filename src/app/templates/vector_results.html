@@ -10,39 +10,147 @@
     />
   </head>
   <body>
-    <div class="relative max-w-xl mx-auto my-8">
+    <div class="relative max-w-3xl mx-auto my-8">
       <div class="flex justify-center mb-6">
         <a
           href="{{ url_for('index') }}"
           class="text-white bg-blue-700 hover:bg-blue-800 focus:ring-4 focus:ring-blue-300 font-medium rounded-lg text-sm px-5 py-2.5"
-          >Back to Search</a>
+        >
+          Back to Search
+        </a>
       </div>
       <h1 class="text-center text-2xl font-bold mb-6">
         Search Results for "{{ query }}": found {{ results | length }} results
       </h1>
       <div class="grid grid-cols-1 gap-4">
         {% if results %}
-          {% for result in results %}
-            <div class="result p-4 border rounded shadow">
-              <h3 class="font-bold">{{ result.title }}</h3>
-              <div class="metadata text-sm text-gray-600">
-                <strong>DOI:</strong>
-                <a href="{{ result.doi }}" target="_blank" class="text-blue-500">
-                  {{ result.doi }}
-                </a><br />
-                <strong>Source:</strong> {{ result.source }}<br />
-                <strong>Authors:</strong> {{ result.authors }}<br />
-                <strong>Distance:</strong> {{ result.distance }}
+        <div class="result container mx-auto min-w-2xl p-2 sm:p-4">
+          <div class="flex flex-col overflow-x-auto text-xs">
+            <div class="flex text-left">
+              <div class="w-32 px-2 py-3 sm:p-3">Source</div>
+              <div class="flex-1 w-96 px-2 py-3 sm:p-3">Title</div>
+              <div class="hidden w-46 px-2 py-3 text-right sm:p-3 sm:block">
+                DOI
               </div>
-              <p class="mt-2">
-                {{ result.document | replace('\n', '<br />') | safe }}
-              </p>
             </div>
-          {% endfor %}
-        {% else %}
-          <p class="text-center mt-4">No results found.</p>
+            {% for result in results %}
+            <!-- Clickable row with modal trigger -->
+            <div
+              class="flex border-b border-opacity-20 cursor-pointer"
+              data-modal-target="modal-{{ loop.index }}"
+              data-modal-toggle="modal-{{ loop.index }}"
+            >
+              <div class="w-32 px-2 py-3 sm:p-3">
+                <p>{{ result.source }}</p>
+              </div>
+              <div
+                class="flex-1 w-96 block px-2 py-3 truncate sm:p-3 sm:w-auto"
+              >
+                {{ result.title }}
+              </div>
+              <div
+                class="hidden w-46 px-2 py-3 text-right sm:p-3 sm:block dark:text-gray-600"
+              >
+                <p>{{ result.doi }}</p>
+              </div>
+            </div>
+
+            <!-- Modal for this result -->
+            <div
+              id="modal-{{ loop.index }}"
+              tabindex="-1"
+              aria-hidden="true"
+              class="fixed top-0 left-0 right-0 z-50 hidden w-full p-4 overflow-x-hidden overflow-y-auto md:inset-0 h-[calc(100%-1rem)] max-h-full"
+            >
+              <div class="relative w-full max-w-xl max-h-full">
+                <!-- Modal content -->
+                <div class="relative bg-white rounded-lg shadow">
+                  <button
+                    type="button"
+                    class="absolute top-3 right-2.5 text-gray-400 bg-transparent hover:bg-gray-200 hover:text-gray-900 rounded-lg text-sm p-1.5 ml-auto inline-flex items-center"
+                    data-modal-toggle="modal-{{ loop.index }}"
+                  >
+                    <svg
+                      aria-hidden="true"
+                      class="w-5 h-5"
+                      fill="currentColor"
+                      viewBox="0 0 20 20"
+                      xmlns="http://www.w3.org/2000/svg"
+                    >
+                      <path
+                        fill-rule="evenodd"
+                        d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z"
+                        clip-rule="evenodd"
+                      ></path>
+                    </svg>
+                    <span class="sr-only">Close modal</span>
+                  </button>
+                  <div class="p-6 text-left">
+                    <h3 class="mb-4 text-xl font-medium text-gray-900">
+                      {{ result.title }}
+                    </h3>
+                    <div class="mb-4">
+                      <p class="text-gray-700 mb-2">
+                        <strong>Source:</strong> {{ result.source }}
+                      </p>
+                      <p class="text-gray-700 mb-2">
+                        <strong>DOI:</strong> {{ result.doi }}
+                      </p>
+                      <p class="text-gray-700 mb-2">
+                        <strong>Authors:</strong> {{ result.authors }}
+                      </p>
+                      <p class="text-gray-700">
+                        <strong>Abstract:</strong> {{ result.document }}
+                      </p>
+                    </div>
+                    <button
+                      data-modal-toggle="modal-{{ loop.index }}"
+                      type="button"
+                      class="text-white bg-blue-700 hover:bg-blue-800 focus:ring-4 focus:outline-none focus:ring-blue-300 font-medium rounded-lg text-sm px-5 py-2.5 text-center"
+                    >
+                      Close
+                    </button>
+                    {% if result.source|lower in 'pubmed' %}
+                    <a
+                      href="/extraction?db=pubmed&pmcid={{ result.PMCID }}"
+                      class="text-white bg-green-700 hover:bg-green-800 focus:ring-4 focus:outline-none focus:ring-green-300 font-medium rounded-lg text-sm px-5 py-2.5 text-center"
+                    >
+                      Extract Data
+                    </a>
+                    {% elif 'springer' in result.source|lower %}
+                    <a
+                      href="/extraction?db=springer&doi={{ result.doi_suffix }}"
+                      class="text-white bg-green-700 hover:bg-green-800 focus:ring-4 focus:outline-none focus:ring-green-300 font-medium rounded-lg text-sm px-5 py-2.5 text-center"
+                    >
+                      Extract Data
+                    </a>
+                    {% elif 'scopus' in result.source|lower %}
+                    <a
+                      href="/extraction?db=scopus&doi={{ result.doi_suffix }}"
+                      class="text-white bg-green-700 hover:bg-green-800 focus:ring-4 focus:outline-none focus:ring-green-300 font-medium rounded-lg text-sm px-5 py-2.5 text-center"
+                    >
+                      Extract Data
+                    </a>
+                    {% elif 'europe pmc' in result.source|lower %}
+                    <a
+                      href="/extraction?db=europe&pmcid={{ result.PMCID }}"
+                      class="text-white bg-green-700 hover:bg-green-800 focus:ring-4 focus:outline-none focus:ring-green-300 font-medium rounded-lg text-sm px-5 py-2.5 text-center"
+                    >
+                      Extract Data
+                    </a>
+                    {% else %} {% endif %}
+                  </div>
+                </div>
+              </div>
+            </div>
+            {% endfor %}
+          </div>
+        </div>
         {% endif %}
       </div>
     </div>
+
+    <!-- Flowbite JS (required for modal functionality) -->
+    <script src="https://cdn.jsdelivr.net/npm/flowbite@3.1.2/dist/flowbite.min.js"></script>
   </body>
 </html>

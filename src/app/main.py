@@ -1,18 +1,20 @@
 #!/usr/bin/env python3
-import json, os
-import re
-from dotenv import load_dotenv
+import json, os, re
 import pandas as pd
 from flask import Flask, redirect, render_template, request, jsonify, url_for
+from dotenv import load_dotenv
 from google import genai
+import requests
+from unidecode import unidecode
 
 from app import search_literature 
 from db import index_papers, query_vector_db
 
 app = Flask(__name__)
-
 load_dotenv()
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
+SPRINGER_API_KEY = os.getenv('SPRINGER_API_KEY')
+SCOPUS_API_KEY = os.getenv('SCOPUS_API_KEY')
 
 @app.route("/", methods=["GET", "POST"])
 @app.route("/index", methods=["GET", "POST"])
@@ -72,6 +74,37 @@ def llm_results():
     query_results = run_gemini_query(query, enabled_dbs)
     return render_template("llm_results.html", results=query_results, query=query, total=len(query_results))
 
+@app.route("/extraction")
+def extraction_results():
+    db = request.args.get("db")
+    extraction_data = {}
+    
+    if db == "pubmed":
+        pmcid = request.args.get("pmcid")
+        if not pmcid:
+            return "PMCID not provided.", 400
+        extraction_data = extract_data_from_full_text("pubmed", pmcid=pmcid)
+    elif db == "springer":
+        doi = request.args.get("doi")
+        if not doi:
+            return "DOI not provided.", 400
+        extraction_data = extract_data_from_full_text("springer", doi=doi)
+    elif db == "scopus":
+        doi = request.args.get("doi")
+        if not doi:
+            return "DOI not provided.", 400
+        extraction_data = extract_data_from_full_text("scopus", doi=doi)
+    elif db == "europe":
+        europe_pmc = request.args.get("pmcid")
+        if not europe_pmc:
+            return "Europe PMC ID not provided.", 400
+        extraction_data = extract_data_from_full_text("europe", pmcid=europe_pmc)
+    else:
+        return "Unsupported database.", 400
+
+    return render_template("extraction.html", extraction=extraction_data)
+
+
 def run_vector_query(search_query, chroma_query, enabled_dbs):
     papers_df = search_literature(search_query, max_results=25, enabled_dbs=enabled_dbs)
     papers_list = papers_df.to_dict(orient="records")  # Convert DataFrame to list of dicts
@@ -92,7 +125,7 @@ def run_vector_query(search_query, chroma_query, enabled_dbs):
         title = metadatas[i].get("title")
         doc_text = doc
         
-        if title and doc_text.startswith(title): # Sometimes the title is included in the document text - remove this
+        if title and doc_text.startswith(title):  # Sometimes the title is included in the document text - remove this
             doc_text = doc_text[len(title):].lstrip("\n ").strip()
             
         query_results.append({
@@ -101,7 +134,9 @@ def run_vector_query(search_query, chroma_query, enabled_dbs):
             "doi": metadatas[i].get("doi"),
             "source": metadatas[i].get("source"),
             "authors": metadatas[i].get("authors"),
-            "document": doc_text
+            "document": doc_text,
+            "doi_suffix": metadatas[i].get("doi_suffix"),
+            "PMCID": metadatas[i].get("PMCID")
         })
     
     print(f"Found {len(query_results)} similar papers.")
@@ -154,9 +189,10 @@ def run_gemini_query(search_query, enabled_dbs):
 def query_gemini(query):
     client = genai.Client(api_key=GEMINI_API_KEY)
     response = client.models.generate_content(
-        model="gemini-2.0-flash", contents=query
+        model="gemini-2.0-flash",
+        contents=query
     )
-    print(response.text)
+    return unidecode(response.text)
 
 def gemini_filter(search_query, papers):
     aggregated_text = ""
@@ -197,6 +233,151 @@ def gemini_filter(search_query, papers):
     )
     
     return response.text
+
+def fetch_full_text(type, pmcid=None, doi=None):
+    if type == "pubmed":
+        url = f"https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pmc&id={pmcid}"
+        response = requests.get(url)
+        if response.status_code == 200:
+            return response.text
+        else:
+            raise Exception(f"Error fetching full text for PMC ID {pmcid}: {response.status_code} - {response.text}")
+    elif type == "springer":
+        base_url = "https://api.springernature.com/openaccess/jats"
+        params = {
+            "api_key": SPRINGER_API_KEY,
+            "q": f"doi:{doi}"
+        }
+        response = requests.get(base_url, params=params)
+        if response.status_code == 200:
+            return response.text
+        else:
+            raise Exception(f"Error fetching Springer full text for DOI {doi}: {response.status_code} - {response.text}")
+    elif type == "scopus":
+        base_url = "https://api.elsevier.com/content/article/doi/"
+        url = f"{base_url}{doi}"
+        headers = {
+            "X-ELS-APIKey": SCOPUS_API_KEY,
+            "Accept": "application/xml"  # Change to "application/json" if JSON is preferred.
+        }
+        response = requests.get(url, headers=headers)
+        if response.status_code == 200:
+            return response.text
+        else:
+            raise Exception(f"Error fetching Scopus full text for DOI {doi}: {response.status_code} - {response.text}")
+    elif type == "europe":
+            url = f"https://www.ebi.ac.uk/europepmc/webservices/rest/{pmcid}/fullTextXML"
+            response = requests.get(url)
+            if response.status_code == 200:
+                return response.text
+            else:
+                raise Exception(f"Error fetching full text for Europe PMC ID {pmcid}: {response.status_code} - {response.text}")
+
+
+# def chunk_text(text, chunk_size=1000):
+#     return [text[i:i+chunk_size] for i in range(0, len(text), chunk_size)]
+def gemini_extract_data(chunk):
+    prompt = (
+        f"Extract only the statistics, key data points, and a summary of the whole paper from the following text, "
+        f"strictly based on the information provided. Do not add any additional details not mentioned from the paper. "
+        f"Return your answer in valid JSON format with the keys 'statistics' and 'key_points' and 'summary'.\n"
+        f"For each statistic, please ONLY have a brief sentence of what the statistic is about based on the relevant text (assume the reader has not read the full text, so please also provide context for this statistic).\n"
+        f"The 'summary' key should be a brief summary of the whole paper.\n"
+        f"If the provided document indicates the paper is not available, then return N/A as the summary.\n"
+        f"For example:\n"
+        f"""{{
+        "statistics": [
+            {{
+            "statistic": "The H&E DL Angio model achieves a Spearman correlation of 0.77 with the Angioscore across multiple cohorts.",
+            "context": "This statistic describes the correlation between the deep learning model's predictions and the RNA-based Angioscore in real-world data."
+            }},
+            {{
+            "statistic": "The H&E DL Angio model achieves a Spearman correlation of 0.73 with the Angioscore across multiple cohorts.",
+            "context": "This statistic describes the correlation between the deep learning model's predictions and the RNA-based Angioscore in the IMmotion150 trial cohort."
+            }},
+            {{
+            "statistic": "The c-index for DL Angio prediction of anti-angiogenic therapy response approximates the Angioscore (0.66 vs 0.67) in the IMmotion150 trial.",
+            "context": "This data point compares the performance of the deep learning model and the RNA Angioscore in predicting response to anti-angiogenic therapy, showing they are similar."
+            }},
+            {{
+            "statistic": "Spearman correlation between CD31 IHC and the Angioscore is 0.62 in the IMmotion150 cohort.",
+            "context": "The article notes that immunohistochemical staining of endothelial cells using CD31 correlates with the Angioscore with this value, though the relationship was weaker than expected"
+            }},
+            {{
+            "statistic": "Precision, Recall, and F1 scores for CD31 arm are 0.53, 0.66, and 0.58 respectively.",
+            "context": "This statistic describes the model's performance in CD31 segmentation, showing a tendency to overpredict the boundaries of the CD31 mask."
+            }},
+            {{
+            "statistic": "The H&E DL Angioscore has a correlation of 0.68 with the RNA Angioscore on the held-out portion of the training TCGA cohort.",
+            "context": "This metric illustrates the correlation achieved by the model on a subset of the TCGA dataset that was not used for training."
+            }},
+            {{
+            "statistic": "Overall survival of 520 patients is stratified by H&E DL Angioscore, with a c-index of 0.75",
+            "context": "This data shows how well the H&E DL Angioscore can predict overall survival"
+            }}
+        ],
+        "key_points": [
+            "The study developed a deep learning (DL) model (H&E DL Angio) to predict anti-angiogenic (AA) therapy response in renal cancer using histopathology slides.",
+            "H&E DL Angio achieves strong correlation with the RNA-based Angioscore, a predictor of treatment response.",
+            "The model predicts AA response in clinical trial cohorts, performing similarly to the Angioscore but at a lower cost.",
+            "Angiogenesis inversely correlates with grade and stage in renal cancer.",
+            "The model provides a visual representation of the vascular network, enhancing interpretability."
+        ],
+        "summary": "This paper presents a deep learning model (H&E DL Angio) that predicts anti-angiogenic therapy response in renal cancer patients based on histopathology slides. The model correlates strongly with the RNA-based Angioscore, predicts treatment response in clinical trials, and reveals biological insights such as the inverse relationship between angiogenesis and tumor grade/stage. It offers a cost-effective and interpretable alternative to RNA-based assays for predicting therapy response."
+        }}\n"""
+        "Text:\n" + chunk
+    )
+    client = genai.Client(api_key=GEMINI_API_KEY)
+    response = client.models.generate_content(
+        model="gemini-2.0-flash",
+        contents=prompt
+    )
+    print(f"RESPONSE: {response.text}")
+    try:
+        extraction = json.loads(response.text.replace("```json", "").replace("```", "").strip())
+    except Exception as e:
+        print("Error parsing Gemini extraction response:", e)
+        extraction = {"statistics": "", "key_points": ""}
+    return extraction
+
+
+def extract_data_from_full_text(type, doi=None, pmcid=None):
+    if type == "pubmed":
+        full_text = fetch_full_text("pubmed", pmcid=pmcid)
+        print(f"Full text acquired for PMC ID: {pmcid}.")
+    if type == "springer":
+        full_text = fetch_full_text("springer", doi=doi)
+        print(f"Full text acquired for Springer with DOI: {doi}.")
+    if type == "scopus":
+        full_text = fetch_full_text("scopus", doi=doi)
+        print(f"Full text acquired for Scopus with DOI: {doi}.")
+    if type == "europe":
+        full_text = fetch_full_text("europe", pmcid=pmcid)
+        print(f"Full text acquired for Europe PMC ID: {pmcid}.")
+    if type == "acm":
+        pass
+    extracted_results = []
+    
+    extraction = gemini_extract_data(full_text)
+    extracted_results.append(extraction)
+    
+    aggregated_statistics = []
+    aggregated_key_points = []
+    summary = []
+    
+    for res in extracted_results:
+        stat = res.get("statistics", {})
+        if isinstance(stat, list):
+            aggregated_statistics.extend(stat)  # flatten the list
+        else:
+            aggregated_statistics.append(stat)
+        kp = res.get("key_points", [])
+        if isinstance(kp, list):
+            aggregated_key_points.extend(kp)
+        else:
+            aggregated_key_points.append(kp)
+    
+    return {"statistics": aggregated_statistics, "key_points": aggregated_key_points, "summary": res.get("summary")}
 
 if __name__ == '__main__':
     app.run(debug=True)

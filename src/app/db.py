@@ -16,34 +16,57 @@ def get_embedding(text):
     return model.encode(text).tolist()
 
 def index_papers(papers):
-    ids = []
-    metadatas = []
-    documents = []
-
-    for i, paper in enumerate(papers):
+    try:
+        existing_data = collection.get(include=["metadatas"])
+    except Exception as e:
+        print("Error retrieving existing metadata:", e)
+        existing_data = {"metadatas": []}
+    
+    existing_dois = set()
+    for meta in existing_data.get("metadatas", []):
+        doi_val = meta.get("doi", "").strip().lower()
+        if doi_val and doi_val != "n/a":
+            existing_dois.add(doi_val)
+    
+    new_ids = []
+    new_metadatas = []
+    new_documents = []
+    
+    for paper in papers:
+        doi = paper.get("DOI", "").strip().lower()
+        # If DOI exists and is already indexed, skip paper
+        if doi and doi != "n/a" and doi in existing_dois:
+            print(f"Skipping duplicate paper with DOI: {doi}")
+            continue
+        
         paper_id = str(uuid.uuid4())
-        ids.append(paper_id)
+        new_ids.append(paper_id)
         
         text = f"{paper.get('Title', '')}\n{paper.get('Abstract', '')}"
-        documents.append(text)
+        new_documents.append(text)
         
         metadata = {
             "title": paper.get("Title", ""),
             "doi": paper.get("DOI", ""),
             "source": paper.get("Source", ""),
-            "authors": paper.get("Authors", "")
+            "authors": paper.get("Authors", ""),
+            "doi_suffix": paper.get("doi_suffix", ""),
+            "PMCID": paper.get("PMCID", "")
         }
-        metadatas.append(metadata)
+        new_metadatas.append(metadata)
     
-    embeddings = [get_embedding(doc) for doc in documents]
-    
-    collection.add(
-        ids=ids,
-        embeddings=embeddings,
-        metadatas=metadatas,
-        documents=documents
-    )
-    print(f"Indexed {len(ids)} papers into ChromaDB.")
+    if new_ids:
+        embeddings = [get_embedding(doc) for doc in new_documents]
+        collection.add(
+            ids=new_ids,
+            embeddings=embeddings,
+            metadatas=new_metadatas,
+            documents=new_documents
+        )
+        print(f"Indexed {len(new_ids)} new papers into ChromaDB.")
+    else:
+        print("No new papers to index.")
+
 
 def query_vector_db(query_text, n_results=100):
     query_embedding = get_embedding(query_text)

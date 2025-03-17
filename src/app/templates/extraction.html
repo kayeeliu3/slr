@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Data Extraction Results</title>
+    <link
+      href="https://cdn.jsdelivr.net/npm/flowbite@3.1.2/dist/flowbite.min.css"
+      rel="stylesheet"
+    />
+  </head>
+  <body class="bg-gray-100">
+    <div class="max-w-3xl mx-auto my-8 p-4 bg-white rounded-lg shadow">
+      <h1 class="text-2xl font-bold mb-4">Extraction Results</h1>
+
+      <div class="mb-4">
+        <h2 class="text-xl font-semibold mb-2">Summary</h2>
+        <p class="text-gray-700">{{ extraction.summary }}</p>
+      </div>
+
+      <div class="mb-4">
+        <h2 class="text-xl font-semibold mb-2">Statistics</h2>
+        <ul class="list-disc list-inside text-gray-700">
+            {% for stat in extraction.statistics %}
+            <li>{{ stat.statistic }}
+              <ol class="list-disc list-inside ps-5 mb-2 text-gray-400">
+                <li>{{ stat.context }}</li>
+              </ol>
+            </li>
+          {% endfor %}
+        </ul>
+      </div>
+
+      <div class="mb-4">
+        <h2 class="text-xl font-semibold mb-2">Key Points</h2>
+        <ul class="list-disc list-inside text-gray-700">
+          {% for point in extraction.key_points %}
+          <li>{{ point }}</li>
+          {% endfor %}
+        </ul>
+      </div>
+
+      <div class="flex justify-end">
+        <button
+          onclick="history.back()"
+          class="text-white bg-blue-700 hover:bg-blue-800 focus:ring-4 focus:ring-blue-300 font-medium rounded-lg text-sm px-5 py-2.5 text-center"
+        >
+          Back to Search
+        </button>
+      </div>
+    </div>
+  </body>
+</html>

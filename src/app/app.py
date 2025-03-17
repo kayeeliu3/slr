@@ -135,6 +135,22 @@ def search_pubmed(query, max_results):
         medline = article.find("MedlineCitation")
         article_info = medline.find("Article")
         
+        # Retrieve PMCID from PubmedData (if available)
+        pmcid = "N/A"
+        pubmed_data = article.find("PubmedData")
+        if pubmed_data is not None:
+            article_id_list = pubmed_data.find("ArticleIdList")
+            if article_id_list is not None:
+                for article_id in article_id_list.findall("ArticleId"):
+                    if article_id.get("IdType") == "pmc":
+                        pmcid_raw = article_id.text.strip()
+                        # Remove the "PMC" prefix if present
+                        if pmcid_raw.upper().startswith("PMC"):
+                            pmcid = pmcid_raw[3:]
+                        else:
+                            pmcid = pmcid_raw
+                        break
+        
         # Title extraction
         title_elem = article_info.find("ArticleTitle")
         title = title_elem.text.strip() if title_elem is not None and title_elem.text else "N/A"
@@ -166,6 +182,7 @@ def search_pubmed(query, max_results):
         papers.append({
             "Title": normalise_text(title),
             "Source": "PubMed",
+            "PMCID": normalise_text(pmcid),
             "DOI": normalise_text(doi),
             "Abstract": normalise_text(abstract),
             "Authors": normalise_text(authors_str)
@@ -173,6 +190,7 @@ def search_pubmed(query, max_results):
     
     print(f"Found {len(papers)} papers from PubMed.")
     return papers
+
 
 def search_europe_pmc(query, max_results):
     base_url = "https://www.ebi.ac.uk/europepmc/webservices/rest/search"
@@ -198,8 +216,9 @@ def search_europe_pmc(query, max_results):
         if doi == "N/A" or not doi:
             continue
         
+        europe_pmc_id = record.get("pmcid", 'N/A')
         title = record.get("title", "N/A")
-        source = record.get("source", "N/A")
+        source = record.get("source", "N/A") + " (Europe PMC)"
         
         abstract = record.get("abstractText", "")
         if not abstract.strip():
@@ -216,6 +235,7 @@ def search_europe_pmc(query, max_results):
         paper = {
             "Title": normalise_text(title),
             "Source": normalise_text(source), 
+            "PMCID": europe_pmc_id,
             "DOI": f"https://doi.org/{doi}",
             "Abstract": normalise_text(abstract),
             "Authors": normalise_text(authors)
@@ -225,6 +245,14 @@ def search_europe_pmc(query, max_results):
     print(f"Found {len(results)} papers from Europe PMC.")
     return results
 
+def get_scopus_text(doi):
+    url=f"https://api.elsevier.com/content/article/doi/{doi}"
+    headers = {"X-ELS-APIKey": SCOPUS_API_KEY}
+    
+    response = requests.get(url, headers=headers)
+    
+    return response
+
 def search_scopus(tr, query, max_results):
     refined_query = refine_scopus_query(query)
     
@@ -232,7 +260,6 @@ def search_scopus(tr, query, max_results):
     headers = {"X-ELS-APIKey": SCOPUS_API_KEY}
     params = {"query": refined_query.replace('```', "").strip(), "count": max_results, "format": "json"}
     
-    print("Refined Scopus Query:", refined_query)
     response = requests.get(base_url, headers=headers, params=params).json()
 
     papers = []
@@ -241,6 +268,12 @@ def search_scopus(tr, query, max_results):
         doi_url = f"https://doi.org/{doi_suffix}" if doi_suffix else "N/A"
         abstract = entry.get("dc:description", "")
         title = entry.get("dc:title", "N/A")
+        
+        full_text = get_scopus_text(doi_suffix)
+        if full_text.status_code == "200":
+            abstract = full_text.get("full-text-retrieval-response").get("coredata").get("dc:description", "")
+            print("AFTER FULL:" + abstract)
+            
         if not abstract and doi_url != "N/A":
             abstract = scrape_abstract_from_doi(doi_url, tr, title=title)
             
@@ -251,6 +284,7 @@ def search_scopus(tr, query, max_results):
             "Title": normalise_text(title),
             "Source": "Scopus",
             "DOI": doi_url,
+            "doi_suffix": doi_suffix,
             "Abstract": normalise_text(abstract.strip().replace("Abstract","",1)),
             "Authors": normalise_text(entry.get("dc:creator", "No Authors Available"))
         })
@@ -365,12 +399,13 @@ def search_springer(query, max_results):
             if author_names:
                 authors = ", ".join(author_names)
         
-        source = record.get("publicationName", record.get("publisher", "N/A"))
+        source = record.get("publicationName", record.get("publisher", "N/A")) + " (Springer)"
         
         paper = {
             "Title": normalise_text(title),
             "Source": normalise_text(source),
             "DOI": normalise_text(doi_url),
+            "doi_suffix": doi,
             "Abstract": normalise_text(abstract_text),
             "Authors": normalise_text(authors)
         }
@@ -417,6 +452,7 @@ def search_acm(tr, query, max_results=5):
             "Title": normalise_text(title),
             "Source": "ACM (via CrossRef)",
             "DOI": f"https://doi.org/{doi}",
+            "doi_suffix": doi,
             "Authors": normalise_text(authors),
             "Abstract": normalise_text(clean_abstract)
         })
