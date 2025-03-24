@@ -16,7 +16,7 @@ GEMINI_API_SECRET = os.getenv('GEMINI_API_SECRET')
 
 def search_literature(query, max_results=40, enabled_dbs=None):
     if enabled_dbs is None:
-        enabled_dbs = ["pubmed", "scopus", "springer", "acm"]
+        enabled_dbs = ["pubmed", "europe", "scopus", "springer"]
     results = []
 
     with TorRequest(proxy_port=9050, ctrl_port=9051, password=None) as tr:
@@ -26,7 +26,7 @@ def search_literature(query, max_results=40, enabled_dbs=None):
             print("Searching PubMed...")
             results.extend(search_pubmed(query, max_results))
             print("PubMed search complete.")
-        if "pmc" in enabled_dbs:
+        if "europe" in enabled_dbs:
             print("Searching Europe PMC...")
             results.extend(search_europe_pmc(query, max_results))
             print("Europe PMC search complete.")
@@ -38,10 +38,6 @@ def search_literature(query, max_results=40, enabled_dbs=None):
             print("Searching Springer...")
             results.extend(search_springer(query, max_results))
             print("Springer search complete.")
-        if "acm" in enabled_dbs:
-            print("Searching ACM...")
-            results.extend(search_acm(tr, query, max_results))
-            print("ACM search complete.")
         
         print("All searches complete. Removing duplicates and combining output...")
         df = pd.DataFrame(results)
@@ -412,52 +408,6 @@ def search_springer(query, max_results):
         papers.append(paper)
     
     print(f"Found {len(papers)} papers from Springer.")
-    return papers
-
-def search_acm(tr, query, max_results=5):
-    base_url = "https://api.crossref.org/works"
-    params = {
-        "query": query,
-        "filter": "has-abstract:true",
-        "rows": max_results
-    }
-    response = requests.get(base_url, params=params).json()
-    
-    papers = []
-    for item in response.get("message", {}).get("items", []):
-        title = item.get("title", ["No Title Available"])[0]
-        doi = item.get("DOI", "N/A")
-        doi_url = f"https://doi.org/{doi}" if doi != "N/A" else "N/A"
-        authors = ", ".join([
-            f"{author.get('given', '')} {author.get('family', '')}".strip()
-            for author in item.get("author", [])
-        ]) if "author" in item else "No Authors Available"
-        abstract = item.get("abstract", "")
-        if not abstract and doi_url != "N/A":
-            abstract = scrape_abstract_from_doi(doi_url, tr, title=title)
-        
-        # If no abstract was found, omit this paper.
-        if not abstract or not abstract.strip():
-            continue
-
-        # Clean up the abstract text (remove some HTML tags/entities)
-        clean_abstract = re.sub(
-            r'\s+', ' ',
-            abstract.replace("<jats:p>", "").replace("</jats:p>", "")
-                    .replace("<jats:italic>", "").replace("</jats:italic>", "")
-                    .replace("\n", " ").replace("&amp;", "&").replace('\"', '"').strip()
-        )
-    
-        papers.append({
-            "Title": normalise_text(title),
-            "Source": "ACM (via CrossRef)",
-            "DOI": f"https://doi.org/{doi}",
-            "doi_suffix": doi,
-            "Authors": normalise_text(authors),
-            "Abstract": normalise_text(clean_abstract)
-        })
-    
-    print(f"Found {len(papers)} papers from ACM.")
     return papers
 
 def scrape_abstract_from_doi(doi_url, tr, title=None, retries=2, timeout=30):

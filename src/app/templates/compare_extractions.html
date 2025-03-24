@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Comparative Insights</title>
+    <link
+      href="https://cdn.jsdelivr.net/npm/flowbite@3.1.2/dist/flowbite.min.css"
+      rel="stylesheet"
+    />
+    <link
+      href="https://cdn.jsdelivr.net/npm/@tailwindcss/typography@0.5.2/dist/typography.min.css"
+      rel="stylesheet"
+    />
+  </head>
+  <body class="bg-gray-100">
+    <div class="max-w-3xl mx-auto my-8 p-8 bg-white rounded-lg shadow">
+      <h1 class="text-2xl font-bold mb-4">
+        Comparative Insights Across Papers
+      </h1>
+      <div class="prose prose-sm text-gray-700">
+        {% if insights.error %}
+        <p>Error parsing insights: {{ insights.error }}</p>
+        <pre>{{ insights.raw }}</pre>
+        {% else %}
+        <h2 class="font-bold">Papers used in insights:</h2>
+        <ul class="list-disc list-inside">
+          {% for title in insights.paper_titles %}
+          <li class="ml-2">{{ title }}</li>
+          {% endfor %}
+        </ul>
+        <div class="mt-4 mb-4">
+          <h2 class="font-bold">Similarities</h2>
+          <p>{{ insights.similarities }}</p>
+        </div>
+        <div class="mb-4">
+          <h2 class="font-bold">Differences</h2>
+          <p>{{ insights.differences }}</p>
+        </div>
+
+        <div class="mb-4">
+          <h2 class="font-bold">Correlations</h2>
+          <p>{{ insights.correlations }}</p>
+        </div>
+
+        <div class="mb-4">
+          <h2 class="font-bold">Summary</h2>
+          <p>{{ insights.summary }}</p>
+        </div>
+        {% endif %}
+      </div>
+      <div class="flex justify-end mt-4">
+        <button
+          type="button"
+          onclick="history.back()"
+          class="text-white bg-blue-700 hover:bg-blue-800 focus:ring-4 focus:ring-blue-300 font-medium rounded-lg text-sm px-5 py-2.5"
+        >
+          Back
+        </button>
+      </div>
+    </div>
+  </body>
+</html>

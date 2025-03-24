@@ -11,7 +11,6 @@
   </head>
   <body>
     <div class="relative max-w-3xl mx-auto my-8">
-      <!-- Back to Search button -->
       <div class="flex justify-center mb-6">
         <a
           href="{{ url_for('index') }}"
@@ -20,9 +19,55 @@
           Back to Search
         </a>
       </div>
+      <div class="flex justify-center mb-6 space-x-4">
+        <form
+          action="{{ url_for('compare_extractions') }}"
+          method="POST"
+          class="relative"
+        >
+          <div style="display: none">
+            <textarea name="results">{{ results|tojson|safe }}</textarea>
+          </div>
+          <button
+            data-tooltip-target="tooltip-default"
+            type="submit"
+            class="text-white bg-purple-700 hover:bg-purple-800 focus:ring-4 focus:ring-purple-300 font-medium rounded-lg text-sm px-5 py-2.5"
+          >
+            Generate Comparative Insights
+          </button>
+          <div
+            id="tooltip-default"
+            role="tooltip"
+            class="absolute z-10 invisible max-w-md inline-block px-3 py-2 text-sm font-medium text-white transition-opacity duration-300 bg-gray-900 rounded-lg shadow-xs opacity-0 tooltip dark:bg-gray-700"
+          >
+            Get comparisons with data between all search results. Currently
+            works best with Springer and PubMed papers.
+            <div class="tooltip-arrow" data-popper-arrow></div>
+          </div>
+        </form>
+        <a
+          href="{{ url_for('manual_comparison') }}"
+          data-tooltip-target="tooltip-manual"
+          class="relative text-white bg-yellow-700 hover:bg-yellow-800 focus:ring-4 focus:ring-yellow-300 font-medium rounded-lg text-sm px-5 py-2.5"
+        >
+          Manual Insights
+        </a>
+        <div
+          id="tooltip-manual"
+          role="tooltip"
+          class="absolute z-10 invisible max-w-xs inline-block px-3 py-2 text-sm font-medium text-white transition-opacity duration-300 bg-gray-900 rounded-lg shadow-xs opacity-0 tooltip dark:bg-gray-700"
+        >
+          Manually insert full texts of papers, and generate comparative
+          insights and similarities/differences between them.
+          <div class="tooltip-arrow" data-popper-arrow></div>
+        </div>
+      </div>
+
       <h1 class="text-center text-2xl font-bold mb-6">
         Search Results for "{{ query }}": found {{ results | length }} results
       </h1>
+
+      <!-- Grid for result rows -->
       <div class="grid grid-cols-1 gap-4">
         {% if results %}
         <div class="result container mx-auto min-w-2xl p-2 sm:p-4">
@@ -36,7 +81,6 @@
               </div>
             </div>
             {% for result in results %}
-            <!-- Clickable Row -->
             <div
               class="flex border-b border-opacity-20 cursor-pointer"
               data-modal-target="modal-{{ loop.index }}"
@@ -54,98 +98,6 @@
                 <p>{{ result.doi }}</p>
               </div>
             </div>
-            <!-- Modal for Detailed View -->
-            <div
-              id="modal-{{ loop.index }}"
-              tabindex="-1"
-              aria-hidden="true"
-              class="fixed top-0 left-0 right-0 z-50 hidden w-full p-4 overflow-x-hidden overflow-y-auto md:inset-0 h-[calc(100%-1rem)] max-h-full"
-            >
-              <div class="relative w-full max-w-xl max-h-full">
-                <div class="relative bg-white rounded-lg shadow">
-                  <button
-                    type="button"
-                    class="absolute top-3 right-2.5 text-gray-400 bg-transparent hover:bg-gray-200 hover:text-gray-900 rounded-lg text-sm p-1.5 ml-auto inline-flex items-center"
-                    data-modal-toggle="modal-{{ loop.index }}"
-                  >
-                    <svg
-                      aria-hidden="true"
-                      class="w-5 h-5"
-                      fill="currentColor"
-                      viewBox="0 0 20 20"
-                      xmlns="http://www.w3.org/2000/svg"
-                    >
-                      <path
-                        fill-rule="evenodd"
-                        d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z"
-                        clip-rule="evenodd"
-                      ></path>
-                    </svg>
-                    <span class="sr-only">Close modal</span>
-                  </button>
-                  <div class="p-6 text-left">
-                    <h3 class="mb-4 text-xl font-medium text-gray-900">
-                      {{ result.title }}
-                    </h3>
-                    <div class="mb-4">
-                      <p class="text-gray-700 mb-2">
-                        <strong>Source:</strong> {{ result.source }}
-                      </p>
-                      <p class="text-gray-700 mb-2">
-                        <strong>DOI:</strong> {{ result.doi }}
-                      </p>
-                      <p class="text-gray-700 mb-2">
-                        <strong>Authors:</strong> {{ result.authors }}
-                      </p>
-                      <p class="text-gray-700 mb-2">
-                        <strong>Abstract:</strong> {{ result.abstract }}
-                      </p>
-                      <p class="mt-2 text-blue-600">
-                        <strong>Explanation:</strong> {{ result.explanation }}
-                      </p>
-                    </div>
-                    <div class="flex gap-2">
-                      <button
-                        data-modal-toggle="modal-{{ loop.index }}"
-                        type="button"
-                        class="text-white bg-blue-700 hover:bg-blue-800 focus:ring-4 focus:outline-none focus:ring-blue-300 font-medium rounded-lg text-sm px-5 py-2.5"
-                      >
-                        Close
-                      </button>
-                      {% if result.source|lower in 'pubmed' %}
-                      <a
-                        href="/extraction?db=pubmed&pmcid={{ result.PMCID }}"
-                        class="text-white bg-green-700 hover:bg-green-800 focus:ring-4 focus:outline-none focus:ring-green-300 font-medium rounded-lg text-sm px-5 py-2.5"
-                      >
-                        Extract Data
-                      </a>
-                      {% elif 'springer' in result.source|lower %}
-                      <a
-                        href="/extraction?db=springer&doi={{ result.doi_suffix }}"
-                        class="text-white bg-green-700 hover:bg-green-800 focus:ring-4 focus:outline-none focus:ring-green-300 font-medium rounded-lg text-sm px-5 py-2.5"
-                      >
-                        Extract Data
-                      </a>
-                      {% elif 'scopus' in result.source|lower %}
-                      <a
-                        href="/extraction?db=scopus&doi={{ result.doi_suffix }}"
-                        class="text-white bg-green-700 hover:bg-green-800 focus:ring-4 focus:outline-none focus:ring-green-300 font-medium rounded-lg text-sm px-5 py-2.5 text-center"
-                      >
-                        Extract Data
-                      </a>
-                      {% elif 'europe pmc' in result.source|lower %}
-                      <a
-                        href="/extraction?db=europe&pmcid={{ result.PMCID }}"
-                        class="text-white bg-green-700 hover:bg-green-800 focus:ring-4 focus:outline-none focus:ring-green-300 font-medium rounded-lg text-sm px-5 py-2.5 text-center"
-                      >
-                        Extract Data
-                      </a>
-                      {% else %} {% endif %}
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
             {% endfor %}
           </div>
         </div>
@@ -153,8 +105,163 @@
         <p class="text-center mt-4">No results found.</p>
         {% endif %}
       </div>
+
+      {% for result in results %}
+      <div
+        id="modal-{{ loop.index }}"
+        tabindex="-1"
+        aria-hidden="true"
+        class="fixed top-0 left-0 right-0 z-50 hidden w-full p-4 overflow-x-hidden overflow-y-auto md:inset-0 h-[calc(100%-1rem)] max-h-full"
+      >
+        <div class="relative w-full max-w-xl max-h-full">
+          <div class="relative bg-white rounded-lg shadow">
+            <button
+              type="button"
+              class="absolute top-3 right-2.5 text-gray-400 bg-transparent hover:bg-gray-200 hover:text-gray-900 rounded-lg text-sm p-1.5 ml-auto inline-flex items-center"
+              data-modal-toggle="modal-{{ loop.index }}"
+            >
+              <svg
+                aria-hidden="true"
+                class="w-5 h-5"
+                fill="currentColor"
+                viewBox="0 0 20 20"
+                xmlns="http://www.w3.org/2000/svg"
+              >
+                <path
+                  fill-rule="evenodd"
+                  d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z"
+                  clip-rule="evenodd"
+                ></path>
+              </svg>
+              <span class="sr-only">Close modal</span>
+            </button>
+            <div class="p-6 text-left">
+              <h3 class="mb-4 text-xl font-medium text-gray-900">
+                {{ result.title }}
+              </h3>
+              <div class="mb-4">
+                <p class="text-gray-700 mb-2 text-sm">
+                  <strong>Source:</strong> {{ result.source }}
+                </p>
+                <p class="text-gray-700 mb-2 text-sm">
+                  <strong>DOI:</strong> {{ result.doi }}
+                </p>
+                <p class="text-gray-700 mb-2 text-sm">
+                  <strong>Authors:</strong> {{ result.authors }}
+                </p>
+                <p class="text-gray-700 mb-2 text-sm">
+                  <strong>Abstract:</strong> {{ result.abstract }}
+                </p>
+                <p class="mt-2 text-blue-600 text-sm">
+                  <strong>Explanation:</strong> {{ result.explanation }}
+                </p>
+              </div>
+              <div class="flex gap-2">
+                <button
+                  data-modal-toggle="modal-{{ loop.index }}"
+                  type="button"
+                  class="text-white bg-blue-700 hover:bg-blue-800 focus:ring-4 focus:outline-none focus:ring-blue-300 font-medium rounded-lg text-sm px-5 py-2.5"
+                >
+                  Close
+                </button>
+                <a
+                  href="#"
+                  onclick="exportCitation('{{ result.doi }}', '{{ result.title }}', '{{ result.authors }}'); return false;"
+                  class="mr-1 text-white bg-indigo-700 hover:bg-indigo-800 focus:ring-4 focus:outline-none focus:ring-indigo-300 font-medium rounded-lg text-sm px-5 py-2.5 text-center"
+                >
+                  Export Citation
+                </a>
+                {% if result.source|lower in 'pubmed' %}
+                <a
+                  href="/extraction?db=pubmed&pmcid={{ result.PMCID }}&doi={{ result.doi }}&title={{ result.title }}"
+                  class="text-white bg-green-700 hover:bg-green-800 focus:ring-4 focus:outline-none focus:ring-green-300 font-medium rounded-lg text-sm px-5 py-2.5"
+                >
+                  Extract Data
+                </a>
+                {% elif 'springer' in result.source|lower %}
+                <a
+                  href="/extraction?db=springer&doi={{ result.doi }}&title={{ result.title }}"
+                  class="text-white bg-green-700 hover:bg-green-800 focus:ring-4 focus:outline-none focus:ring-green-300 font-medium rounded-lg text-sm px-5 py-2.5"
+                >
+                  Extract Data
+                </a>
+                {% elif 'scopus' in result.source|lower %}
+                <a
+                  href="/extraction?db=scopus&doi={{ result.doi }}&title={{ result.title }}"
+                  class="text-white bg-green-700 hover:bg-green-800 focus:ring-4 focus:outline-none focus:ring-green-300 font-medium rounded-lg text-sm px-5 py-2.5"
+                >
+                  Extract Data
+                </a>
+                {% elif 'europe pmc' in result.source|lower %}
+                <a
+                  href="/extraction?db=europe&pmcid={{ result.PMCID }}&doi={{ result.doi }}&title={{ result.title }}"
+                  class="text-white bg-green-700 hover:bg-green-800 focus:ring-4 focus:outline-none focus:ring-green-300 font-medium rounded-lg text-sm px-5 py-2.5"
+                >
+                  Extract Data
+                </a>
+                {% endif %}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      {% endfor %}
+      <div
+        id="exportModal"
+        class="hidden fixed inset-0 flex items-center justify-center bg-gray-900 bg-opacity-50 z-50"
+      >
+        <div class="bg-white p-6 rounded-lg shadow-lg">
+          <p id="exportStatus">Exporting citation, please wait…</p>
+          <button id="closeModalBtn" class="hidden mt-4 text-blue-500">
+            Close
+          </button>
+        </div>
+      </div>
     </div>
-    <!-- Flowbite JS for modal functionality -->
     <script src="https://cdn.jsdelivr.net/npm/flowbite@3.1.2/dist/flowbite.min.js"></script>
+    <script>
+      function exportCitation(doi, title, authors) {
+        // Show the modal with exporting message
+        var modal = document.getElementById("exportModal");
+        modal.classList.remove("hidden");
+        document.getElementById("exportStatus").innerText =
+          "Exporting citation, please wait…";
+        document.getElementById("closeModalBtn").classList.add("hidden");
+
+        // Build the export URL (no next parameter needed)
+        var exportUrl =
+          "/mendeley/export?doi=" +
+          encodeURIComponent(doi) +
+          "&title=" +
+          encodeURIComponent(title) +
+          "&authors=" +
+          encodeURIComponent(authors);
+
+        // Open the export URL in a new tab/window
+        window.open(exportUrl, "_blank");
+
+        // Listen for a message from the export tab
+        window.addEventListener("message", function handler(event) {
+          // (Optional: Check event.origin for security)
+          if (event.data.status === "success") {
+            document.getElementById("exportStatus").innerText =
+              event.data.message;
+          } else if (event.data.status === "error") {
+            document.getElementById("exportStatus").innerText =
+              "Export failed: " + event.data.message;
+          }
+          document.getElementById("closeModalBtn").classList.remove("hidden");
+          // Remove this event listener after handling
+          window.removeEventListener("message", handler);
+        });
+      }
+
+      // Close the modal when the close button is clicked
+      document
+        .getElementById("closeModalBtn")
+        .addEventListener("click", function () {
+          document.getElementById("exportModal").classList.add("hidden");
+        });
+    </script>
   </body>
 </html>

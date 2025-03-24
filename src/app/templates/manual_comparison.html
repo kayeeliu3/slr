@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Manual Text Insights</title>
+    <link
+      href="https://cdn.jsdelivr.net/npm/flowbite@3.1.2/dist/flowbite.min.css"
+      rel="stylesheet"
+    />
+  </head>
+  <body class="bg-gray-100">
+    <div class="max-w-3/4 mx-auto my-8 p-4 bg-white rounded-lg shadow">
+      <h1 class="text-2xl font-bold mb-4">Manual Text Insights</h1>
+      <p class="mb-4">
+        Please provide the title and full text for each paper below. You can add as many papers as you wish.
+      </p>
+      <form action="{{ url_for('manual_comparison') }}" method="POST" id="manualForm">
+        <div id="papers-container">
+          <div class="paper mb-4 border p-4 rounded">
+            <label for="paper_title_1" class="block mb-2 font-semibold">Paper Title</label>
+            <input type="text" name="paper_title" id="paper_title_1" class="w-full p-2 border border-gray-300 rounded" placeholder="Enter paper title" />
+            <label for="full_text_1" class="block mt-4 mb-2 font-semibold">Full Text</label>
+            <textarea name="full_text" id="full_text_1" rows="10" class="w-full p-2 border border-gray-300 rounded" placeholder="Paste full text here..."></textarea>
+          </div>
+        </div>
+        <div class="flex justify-between items-center">
+          <button type="button" onclick="addPaper()" class="text-white bg-green-700 hover:bg-green-800 focus:ring-4 focus:ring-green-300 font-medium rounded-lg text-sm px-5 py-2.5">
+            Add Another Paper
+          </button>
+          <div>
+            <button type="submit" class="mx-2 text-white bg-blue-700 hover:bg-blue-800 focus:ring-4 focus:ring-blue-300 font-medium rounded-lg text-sm px-5 py-2.5">
+              Submit
+            </button>
+            <button type="button" onclick="history.back()" class="mx-2 text-white bg-blue-700 hover:bg-blue-800 focus:ring-4 focus:ring-blue-300 font-medium rounded-lg text-sm px-5 py-2.5">
+              Back
+            </button>
+          </div>
+        </div>
+      </form>
+    </div>
+    <script>
+      let paperCount = 1;
+      function addPaper() {
+        paperCount++;
+        const container = document.getElementById("papers-container");
+        const div = document.createElement("div");
+        div.className = "paper mb-4 border p-4 rounded";
+        div.innerHTML = `
+          <label for="paper_title_${paperCount}" class="block mb-2 font-semibold">Paper Title</label>
+          <input type="text" name="paper_title" id="paper_title_${paperCount}" class="w-full p-2 border border-gray-300 rounded" placeholder="Enter paper title" />
+          <label for="full_text_${paperCount}" class="block mt-4 mb-2 font-semibold">Full Text</label>
+          <textarea name="full_text" id="full_text_${paperCount}" rows="10" class="w-full p-2 border border-gray-300 rounded" placeholder="Paste full text here..."></textarea>
+        `;
+        container.appendChild(div);
+      }
+    </script>
+  </body>
+</html>

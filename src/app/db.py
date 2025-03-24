@@ -68,7 +68,7 @@ def index_papers(papers):
         print("No new papers to index.")
 
 
-def query_vector_db(query_text, n_results=100):
+def query_vector_db(query_text, n_results=50):
     query_embedding = get_embedding(query_text)
     results = collection.query(
         query_embeddings=[query_embedding],
