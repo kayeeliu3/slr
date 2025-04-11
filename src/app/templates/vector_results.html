@@ -48,7 +48,7 @@
         <a
           href="{{ url_for('manual_comparison') }}"
           data-tooltip-target="tooltip-manual"
-          class="relative text-white bg-yellow-700 hover:bg-yellow-800 focus:ring-4 focus:ring-yellow-30 rounded-lg text-sm px-5 py-2.5"
+          class="relative text-white bg-yellow-700 hover:bg-yellow-800 focus:ring-4 focus:ring-yellow-300 rounded-lg text-sm px-5 py-2.5"
         >
           Manual Insights
         </a>
@@ -61,6 +61,50 @@
           insights and similarities/differences between them.
           <div class="tooltip-arrow" data-popper-arrow></div>
         </div>
+        <button
+          data-modal-target="term-modal"
+          data-modal-toggle="term-modal"
+          id="seeSearchTermsBtn"
+          type="button"
+          class="relative text-white bg-green-700 hover:bg-green-800 focus:ring-4 focus:ring-green-300 rounded-lg text-sm px-5 py-2.5"
+        >
+          See Search Terms
+        </button>
+        <button
+          id="dropdownDefaultButton"
+          data-dropdown-toggle="dropdown"
+          class="text-white bg-red-700 hover:bg-red-800 focus:ring-4 focus:ring-red-300 rounded-lg text-sm px-5 py-2.5"
+          type="button"
+        >
+          Export Options
+        </button>
+
+        <div
+          id="dropdown"
+          class="z-10 hidden bg-white divide-y divide-gray-100 rounded-lg shadow-sm w-44 dark:bg-gray-700"
+        >
+          <ul
+            class="py-2 text-sm text-gray-700 dark:text-gray-200"
+            aria-labelledby="dropdownDefaultButton"
+          >
+            <li>
+              <a
+                href="#"
+                class="block px-4 py-2 hover:bg-gray-100 dark:hover:bg-gray-600 dark:hover:text-white"
+                onclick="exportAllCitations(); return false;"
+                >Export all citations to Mendeley</a
+              >
+            </li>
+            <li>
+              <a
+                href="#"
+                class="block px-4 py-2 hover:bg-gray-100 dark:hover:bg-gray-600 dark:hover:text-white"
+                onclick="exportSearchResultsCSV(); return false;"
+                >Export search results as CSV</a
+              >
+            </li>
+          </ul>
+        </div>
       </div>
 
       <h1 class="text-center text-2xl font-bold mb-6">
@@ -72,6 +116,7 @@
           <div class="flex flex-col overflow-x-auto text-xs">
             <div class="flex text-left">
               <div class="w-32 px-2 py-3 sm:p-3">Source</div>
+              <div class="w-32 px-2 py-3 sm:p-3">Pub Year</div>
               <div class="flex-1 w-96 px-2 py-3 sm:p-3">Title</div>
               <div class="hidden w-46 px-2 py-3 text-right sm:p-3 sm:block">
                 DOI
@@ -85,6 +130,9 @@
             >
               <div class="w-32 px-2 py-3 sm:p-3">
                 <p>{{ result.source }}</p>
+              </div>
+              <div class="w-32 px-2 py-3 sm:p-3">
+                <p>{{ result.Year }}</p>
               </div>
               <div
                 class="flex-1 w-96 block px-2 py-3 truncate sm:p-3 sm:w-auto"
@@ -129,8 +177,11 @@
                       {{ result.title }}
                     </h3>
                     <div class="mb-4">
-                      <p class="text-gray-700 mb-2text-sm">
+                      <p class="text-gray-700 mb-2 text-sm">
                         <strong>Source:</strong> {{ result.source }}
+                      </p>
+                      <p class="text-gray-700 mb-2 text-sm">
+                        <strong>Year:</strong> {{ result.Year }}
                       </p>
                       <p class="text-gray-700 mb-2 text-sm">
                         <strong>DOI:</strong> {{ result.doi }}
@@ -191,15 +242,61 @@
               </div>
             </div>
             {% endfor %}
+            <!-- Export Modal -->
             <div
               id="exportModal"
               class="hidden fixed inset-0 flex items-center justify-center bg-gray-900 bg-opacity-50 z-50"
             >
               <div class="bg-white p-6 rounded-lg shadow-lg">
-                <p id="exportStatus">Exporting citation, please wait…</p>
+                <p id="exportStatus">Exporting citations, please wait…</p>
                 <button id="closeModalBtn" class="hidden mt-4 text-blue-500">
                   Close
                 </button>
+              </div>
+            </div>
+
+            <div
+              id="term-modal"
+              class="hidden overflow-y-auto overflow-x-hidden fixed top-0 right-0 left-0 z-50 justify-center items-center w-full md:inset-0 h-[calc(100%-1rem)]"
+            >
+              <div
+                class="bg-white p-6 rounded-lg shadow-lg max-w-md w-full relative"
+              >
+                <h2 class="text-center text-lg font-bold mb-4">
+                  Search Terms Used
+                </h2>
+                <ul class="list-disc list-inside">
+                  {% for db, query_str in refined_queries.items() %}
+                  <li class="mb-2 text-md">
+                    <strong>{{ db|capitalize }}:</strong> {{ query_str }}
+                  </li>
+                  {% endfor %}
+                </ul>
+                <button
+                  data-modal-hide="term-modal"
+                  type="button"
+                  class="mt-2 text-white bg-blue-700 hover:bg-blue-800 focus:ring-4 focus:outline-none focus:ring-blue-300 font-medium rounded-lg text-sm px-5 py-2.5 text-center"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+
+            <div
+              id="insightsModal"
+              class="fixed inset-0 flex items-center justify-center bg-gray-900 bg-opacity-50 z-50 hidden"
+            >
+              <div
+                class="bg-white p-6 rounded-lg shadow-lg max-w-xl w-full relative"
+              >
+                <div class="text-center">
+                  <p
+                    id="insightsStatus"
+                    class="text-lg font-medium text-gray-900"
+                  >
+                    Loading - may take up to fifteen minutes...
+                  </p>
+                </div>
               </div>
             </div>
           </div>
@@ -209,15 +306,14 @@
     </div>
     <script src="https://cdn.jsdelivr.net/npm/flowbite@3.1.2/dist/flowbite.min.js"></script>
     <script>
+      // Function to export an individual citation with modal feedback.
       function exportCitation(doi, title, authors) {
-        // Show the modal with exporting message
         var modal = document.getElementById("exportModal");
         modal.classList.remove("hidden");
         document.getElementById("exportStatus").innerText =
           "Exporting citation, please wait…";
         document.getElementById("closeModalBtn").classList.add("hidden");
 
-        // Build the export URL (no next parameter needed)
         var exportUrl =
           "/mendeley/export?doi=" +
           encodeURIComponent(doi) +
@@ -226,12 +322,9 @@
           "&authors=" +
           encodeURIComponent(authors);
 
-        // Open the export URL in a new tab/window
         window.open(exportUrl, "_blank");
 
-        // Listen for a message from the export tab
         window.addEventListener("message", function handler(event) {
-          // (Optional: Check event.origin for security)
           if (event.data.status === "success") {
             document.getElementById("exportStatus").innerText =
               event.data.message;
@@ -240,16 +333,106 @@
               "Export failed: " + event.data.message;
           }
           document.getElementById("closeModalBtn").classList.remove("hidden");
-          // Remove this event listener after handling
           window.removeEventListener("message", handler);
         });
       }
 
-      // Close the modal when the close button is clicked
       document
         .getElementById("closeModalBtn")
         .addEventListener("click", function () {
           document.getElementById("exportModal").classList.add("hidden");
+        });
+
+      document
+        .querySelector("form[action=\"{{ url_for('compare_extractions') }}\"]")
+        .addEventListener("submit", function () {
+          document.getElementById("insightsModal").classList.remove("hidden");
+        });
+
+      // Make searchResults available via Jinja injection.
+      var searchResults = {{ results|tojson|safe }};
+
+      function exportAllCitations() {
+        if (!searchResults || searchResults.length === 0) {
+          alert("No search results to export.");
+          return;
+        }
+        var modal = document.getElementById("exportModal");
+        modal.classList.remove("hidden");
+        document.getElementById("exportStatus").innerText =
+          "Exporting all citations, please wait…";
+        document.getElementById("closeModalBtn").classList.add("hidden");
+
+        const citations = searchResults.map(result => ({
+          doi: result.doi,
+          title: result.title,
+          authors: result.authors
+        }));
+
+        var exportUrl =
+          "/mendeley/export_all?citations=" +
+          encodeURIComponent(JSON.stringify(citations));
+
+        window.open(exportUrl, "_blank");
+
+        window.addEventListener("message", function handler(event) {
+          if (event.data.status === "success") {
+            document.getElementById("exportStatus").innerText =
+              event.data.message;
+          } else if (event.data.status === "error") {
+            document.getElementById("exportStatus").innerText =
+              "Export failed: " + event.data.message;
+          }
+          document.getElementById("closeModalBtn").classList.remove("hidden");
+          window.removeEventListener("message", handler);
+        });
+      }
+
+      function exportSearchResultsCSV() {
+        var modal = document.getElementById("exportModal");
+        modal.classList.remove("hidden");
+        var exportStatus = document.getElementById("exportStatus");
+        exportStatus.innerText = "Exporting search results to CSV, please wait…";
+        document.getElementById("closeModalBtn").classList.add("hidden");
+
+        // Call the /export_csv endpoint using fetch
+        fetch("/export_csv")
+          .then(response => {
+            if (!response.ok) {
+              throw new Error("Server responded with status " + response.status);
+            }
+            return response.text();
+          })
+          .then(csvData => {
+            // Create a Blob from the CSV text
+            var blob = new Blob([csvData], { type: "text/csv" });
+            var url = window.URL.createObjectURL(blob);
+            var a = document.createElement("a");
+            a.style.display = "none";
+            a.href = url;
+            a.download = "search_results.csv";
+            document.body.appendChild(a);
+            a.click();
+            window.URL.revokeObjectURL(url);
+            exportStatus.innerText = "Export successful. Your CSV file is downloading.";
+            document.getElementById("closeModalBtn").classList.remove("hidden");
+          })
+          .catch(error => {
+            exportStatus.innerText = "Export failed: " + error;
+            document.getElementById("closeModalBtn").classList.remove("hidden");
+          });
+      }
+
+      document
+        .getElementById("closeModalBtn")
+        .addEventListener("click", function () {
+          document.getElementById("exportModal").classList.add("hidden");
+        });
+
+      document
+        .querySelector("form[action=\"{{ url_for('compare_extractions') }}\"]")
+        .addEventListener("submit", function () {
+          document.getElementById("insightsModal").classList.remove("hidden");
         });
     </script>
   </body>

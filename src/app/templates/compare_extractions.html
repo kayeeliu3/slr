@@ -23,7 +23,7 @@
         <p>Error parsing insights: {{ insights.error }}</p>
         <pre>{{ insights.raw }}</pre>
         {% else %}
-        <h2 class="font-bold">Papers used in insights:</h2>
+        <h2 class="font-bold">Papers available used in insights:</h2>
         <ul class="list-disc list-inside">
           {% for title in insights.paper_titles %}
           <li class="ml-2">{{ title }}</li>
@@ -46,6 +46,15 @@
         <div class="mb-4">
           <h2 class="font-bold">Summary</h2>
           <p>{{ insights.summary }}</p>
+        </div>
+
+        <div class="mb-4">
+          <h2 class="font-bold">References</h2>
+          <ul class="list-disc list-inside">
+            {% for ref, title in insights.references.items() %}
+            <li><strong>{{ ref }}</strong>: {{ title }}</li>
+            {% endfor %}
+          </ul>
         </div>
         {% endif %}
       </div>

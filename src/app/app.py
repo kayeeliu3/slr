@@ -1,4 +1,5 @@
 from typing import Iterable
+from flask import session
 import os, requests, re, time
 import pandas as pd
 import xml.etree.ElementTree as ET
@@ -14,29 +15,71 @@ SCOPUS_API_KEY = os.getenv('SCOPUS_API_KEY')
 SPRINGER_API_KEY = os.getenv('SPRINGER_API_KEY')
 GEMINI_API_SECRET = os.getenv('GEMINI_API_SECRET')
 
+def refine_db_queries(user_query, additional_keywords=""):
+    if additional_keywords and additional_keywords.strip():
+        combined_query = f"{user_query} AND {additional_keywords}"
+    else:
+        combined_query = user_query
+
+    prompt = (
+        f"Given the following search query: '{combined_query}', generate refined keyword search queries for the following academic literature databases (do not include publication date), ensuring each query adheres to the database's unique search syntax and standards:\n"
+        "- PubMed: Use appropriate MeSH terms and boolean operators for medical literature.\n"
+        "- Europe PMC: Optimise the query with filters such as IN_PMC and HAS_DOI, ensuring it suits Europe PMC's search interface.\n"
+        "- Scopus: Provide a refined query string using Scopus's advanced search syntax.\n"
+        "- Springer: Tailor a refined query string for the Springer API, emphasising relevant academic literature. Ensure the search is allowed within the free tier of Springer. Eg: keyword:'deep learning' AND keyword:'medical imaging' OR keyword:'diagnostic imaging' OR keyword:'radiography'\n\n"
+        "Return strictly only a JSON object with keys 'pubmed', 'europe', 'scopus', and 'springer', where each key maps to its corresponding refined query string. Output only valid JSON."
+    )
+    client = genai.Client(api_key=GEMINI_API_SECRET)
+    response = client.models.generate_content(model="gemini-2.0-flash", contents=prompt)
+    try:
+        print(response.text)
+        refined_queries = json.loads(response.text.replace("```json", "").replace("```", "").strip())
+    except Exception as e:
+        print("Error parsing JSON from Gemini response:", e)
+        # Fallback: use the combined query if parsing fails
+        refined_queries = {
+            "pubmed": combined_query,
+            "europe": combined_query,
+            "scopus": combined_query,
+            "springer": combined_query
+        }
+    return refined_queries
+
 def search_literature(query, max_results=40, enabled_dbs=None):
     if enabled_dbs is None:
         enabled_dbs = ["pubmed", "europe", "scopus", "springer"]
     results = []
 
+    refined_queries = session.get("refined_queries")
+    if not refined_queries:
+        refined_queries = refine_db_queries(query)
+        session["refined_queries"] = refined_queries
+        
+    filtered_refined = {db: refined_queries[db] for db in enabled_dbs if db in refined_queries}
+    session["refined_queries"] = filtered_refined 
+    
     with TorRequest(proxy_port=9050, ctrl_port=9051, password=None) as tr:
         print("Tor session established. IP:", tr.get('http://ipecho.net/plain').text)
-    
+        
         if "pubmed" in enabled_dbs:
-            print("Searching PubMed...")
-            results.extend(search_pubmed(query, max_results))
+            refined_pubmed = refined_queries.get("pubmed", query)
+            print("Searching PubMed with query:", refined_pubmed)
+            results.extend(search_pubmed(refined_pubmed, max_results))
             print("PubMed search complete.")
         if "europe" in enabled_dbs:
-            print("Searching Europe PMC...")
-            results.extend(search_europe_pmc(query, max_results))
+            refined_europe = refined_queries.get("europe", query)
+            print("Searching Europe PMC with query:", refined_europe)
+            results.extend(search_europe_pmc(refined_europe, max_results))
             print("Europe PMC search complete.")
         if "scopus" in enabled_dbs:
-            print("Searching Scopus...")
-            results.extend(search_scopus(tr, query, max_results))
+            refined_scopus = refined_queries.get("scopus", query)
+            print("Searching Scopus with query:", refined_scopus)
+            results.extend(search_scopus(tr, refined_scopus, max_results))
             print("Scopus search complete.")
         if "springer" in enabled_dbs:
-            print("Searching Springer...")
-            results.extend(search_springer(query, max_results))
+            refined_springer = refined_queries.get("springer", query)
+            print("Searching Springer with query:", refined_springer)
+            results.extend(search_springer(refined_springer, max_results))
             print("Springer search complete.")
         
         print("All searches complete. Removing duplicates and combining output...")
@@ -88,19 +131,19 @@ def remove_duplicates(df):
 
     return pd.DataFrame(unique_rows)
 
-def refine_scopus_query(user_query):
-    """
-    Use Gemini to generate a refined Scopus search query based on the user's input.
-    The prompt instructs Gemini to output a concise query string with specific keywords.
-    """
-    prompt = (
-        f"Given the following search query: '{user_query}', generate a refined, targeted keyword search string "
-        "for Scopus that focuses on relevant academic literature. Ensure it is properly URL encoded, and only return the refined query string, nothing else."
-    )
-    client = genai.Client(api_key=GEMINI_API_SECRET)
-    response = client.models.generate_content(model="gemini-2.0-flash", contents=prompt)
-    refined_query = response.text.strip()
-    return refined_query if refined_query else user_query
+# def refine_scopus_query(user_query):
+#     """
+#     Use Gemini to generate a refined Scopus search query based on the user's input.
+#     The prompt instructs Gemini to output a concise query string with specific keywords.
+#     """
+#     prompt = (
+#         f"Given the following search query: '{user_query}', generate a refined, targeted keyword search string "
+#         "for Scopus that focuses on relevant academic literature. Ensure it is properly URL encoded, and only return the refined query string, nothing else."
+#     )
+#     client = genai.Client(api_key=GEMINI_API_SECRET)
+#     response = client.models.generate_content(model="gemini-2.0-flash", contents=prompt)
+#     refined_query = response.text.strip()
+#     return refined_query if refined_query else user_query
 
 
 def search_pubmed(query, max_results):
@@ -157,6 +200,21 @@ def search_pubmed(query, max_results):
             continue
         abstract = abstract_elem.text.strip()
         
+        journal_issue = article_info.find("Journal/JournalIssue")
+        pub_date = journal_issue.find("PubDate") if journal_issue is not None else None
+        year = "N/A"
+        if pub_date is not None:
+            year_elem = pub_date.find("Year")
+            medline_date_elem = pub_date.find("MedlineDate")
+
+            if year_elem is not None and year_elem.text:
+                year = year_elem.text.strip()
+            elif medline_date_elem is not None and medline_date_elem.text:
+                year_match = re.match(r"(\d{4})", medline_date_elem.text.strip())
+                if year_match:
+                    year = year_match.group(1)
+        
+        
         # Authors extraction
         authors = []
         for author in article_info.findall("AuthorList/Author"):
@@ -181,7 +239,8 @@ def search_pubmed(query, max_results):
             "PMCID": normalise_text(pmcid),
             "DOI": normalise_text(doi),
             "Abstract": normalise_text(abstract),
-            "Authors": normalise_text(authors_str)
+            "Authors": normalise_text(authors_str),
+            "Year": year
         })
     
     print(f"Found {len(papers)} papers from PubMed.")
@@ -227,6 +286,8 @@ def search_europe_pmc(query, max_results):
             author_names = [author.get("fullName", "").strip() for author in author_list if author.get("fullName", "").strip()]
             if author_names:
                 authors = ", ".join(author_names)
+                
+        year = record.get("pubYear")
         
         paper = {
             "Title": normalise_text(title),
@@ -234,7 +295,8 @@ def search_europe_pmc(query, max_results):
             "PMCID": europe_pmc_id,
             "DOI": f"https://doi.org/{doi}",
             "Abstract": normalise_text(abstract),
-            "Authors": normalise_text(authors)
+            "Authors": normalise_text(authors),
+            "Year": year
         }
         results.append(paper)
     
@@ -250,16 +312,15 @@ def get_scopus_text(doi):
     return response
 
 def search_scopus(tr, query, max_results):
-    refined_query = refine_scopus_query(query)
-    
     base_url = "https://api.elsevier.com/content/search/scopus"
     headers = {"X-ELS-APIKey": SCOPUS_API_KEY}
-    params = {"query": refined_query.replace('```', "").strip(), "count": max_results, "format": "json"}
+    params = {"query": query.replace('```', "").strip(), "count": max_results, "format": "json"}
     
     response = requests.get(base_url, headers=headers, params=params).json()
 
     papers = []
     for entry in response.get("search-results", {}).get("entry", []):
+        print(entry)
         doi_suffix = entry.get("prism:doi", "")
         doi_url = f"https://doi.org/{doi_suffix}" if doi_suffix else "N/A"
         abstract = entry.get("dc:description", "")
@@ -275,14 +336,25 @@ def search_scopus(tr, query, max_results):
             
         if not abstract or not abstract.strip():
             continue
-
+        
+        year  = entry.get("prism:coverDate", "")
+        
+        raw_authors = entry.get("dc:creator", "No Authors Available")
+        if isinstance(raw_authors, list):
+            # Join the list into a comma-separated string.
+            authors_str = ", ".join(raw_authors)
+        else:
+            authors_str = raw_authors
+        print("RAW Authors:", authors_str)
+        print("NORMALISE:" + normalise_text(authors_str))
         papers.append({
             "Title": normalise_text(title),
             "Source": "Scopus",
             "DOI": doi_url,
             "doi_suffix": doi_suffix,
             "Abstract": normalise_text(abstract.strip().replace("Abstract","",1)),
-            "Authors": normalise_text(entry.get("dc:creator", "No Authors Available"))
+            "Authors": normalise_text(entry.get("dc:creator", "No Authors Available")),
+            "Year": year
         })
     
     print(f"Found {len(papers)} papers from Scopus using refined query.")
@@ -310,6 +382,10 @@ def search_springer(query, max_results):
     try:
         response = requests.get(base_url, params=params, timeout=30)
         print(f"Springer URL: {response.url}")
+        # Check the response status code
+        if response.status_code != 200:
+            print(f"Springer API returned status code {response.status_code}: {response.text}")
+            return []
         data = response.json()
     except Exception as e:
         print(f"Error retrieving or parsing Springer response: {e}")
@@ -320,6 +396,7 @@ def search_springer(query, max_results):
     for record in records:
         title = record.get("title", "N/A")
         doi = record.get("doi", "N/A")
+        year = record.get("publicationDate", "")
         if doi == "N/A" or not doi:
             continue  # Only process records with a DOI.
         doi_url = f"https://doi.org/{doi}"
@@ -403,7 +480,8 @@ def search_springer(query, max_results):
             "DOI": normalise_text(doi_url),
             "doi_suffix": doi,
             "Abstract": normalise_text(abstract_text),
-            "Authors": normalise_text(authors)
+            "Authors": normalise_text(authors),
+            "Year": year
         }
         papers.append(paper)
     

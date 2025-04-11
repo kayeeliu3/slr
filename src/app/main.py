@@ -1,20 +1,29 @@
 #!/usr/bin/env python3
+import csv
+import io
+import shelve
 import json, os, re, uuid, requests, time
 import pandas as pd
-from flask import Flask, jsonify, redirect, render_template, request, url_for, session
+from flask import Flask, Response, jsonify, redirect, render_template, request, url_for, session
+from flask_session import Session
 from dotenv import load_dotenv
 from google import genai
 from unidecode import unidecode
 from markdown import markdown
 
-from app import search_literature 
+from app import search_literature, refine_db_queries
 from db import index_papers, query_vector_db
 
 app = Flask(__name__)
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+app.config["SESSION_PERMANENT"] = False
+app.config["SESSION_TYPE"] = "filesystem"
+Session(app)
 
 load_dotenv()
 app.secret_key = os.getenv("FLASK_KEY", "fallback-key")
+
+SHELVE_FILENAME = 'cache.db'
 
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
 SPRINGER_API_KEY = os.getenv('SPRINGER_API_KEY')
@@ -26,6 +35,22 @@ MENDELEY_REDIRECT_URI = os.getenv("MENDELEY_REDIRECT_URI")
 MENDELEY_AUTH_URL = "https://api.mendeley.com/oauth/authorize"
 MENDELEY_TOKEN_URL = "https://api.mendeley.com/oauth/token"
 
+# Helper functions for caching vector results
+def save_to_shelve(data, shelf_filename='cache.db'):
+    key = str(uuid.uuid4())
+    with shelve.open(shelf_filename) as shelf:
+        shelf[key] = data
+    return key
+
+def load_from_shelve(key, shelf_filename='cache.db'):
+    with shelve.open(shelf_filename) as shelf:
+        return shelf.get(key)
+
+def delete_from_shelve(key, shelf_filename='cache.db'):
+    with shelve.open(shelf_filename) as shelf:
+        if key in shelf:
+            del shelf[key]
+
 @app.template_filter('md')
 def markdown_filter(text):
     return markdown(text) # In the case of Gemini markdown outputs
@@ -35,22 +60,64 @@ def markdown_filter(text):
 def index():
     if request.method == "POST":
         query = request.form.get("query")
-        pubmed = request.form.get("pubmed")
-        europe = request.form.get("europe")
-        scopus = request.form.get("scopus")
-        springer = request.form.get("springer")
+        additional_keywords = request.form.get("additional_keywords", "")
+        enabled_dbs = []
+        if request.form.get("pubmed"):
+            enabled_dbs.append("pubmed")
+        if request.form.get("europe"):
+            enabled_dbs.append("europe")
+        if request.form.get("scopus"):
+            enabled_dbs.append("scopus")
+        if request.form.get("springer"):
+            enabled_dbs.append("springer")
         search_method = request.form.get("search_method")
         
-        if search_method == "vector":
-            return redirect(url_for("vector_results", query=query,
-                                    pubmed=pubmed, europe=europe, scopus=scopus,
-                                    springer=springer))
-        elif search_method == "llm":
-            return redirect(url_for("llm_results", query=query,
-                                    pubmed=pubmed, europe=europe, scopus=scopus,
-                                    springer=springer))
+        # Store pending values in session, including additional keywords
+        session["pending_query"] = query
+        session["pending_additional_keywords"] = additional_keywords
+        session["pending_enabled_dbs"] = enabled_dbs
+        session["pending_search_method"] = search_method
+        
+        # Redirect to the confirmation page
+        return redirect(url_for("confirm"))
             
     return render_template("index.html")
+
+@app.route("/confirm", methods=["GET", "POST"])
+def confirm():
+    if request.method == "POST":
+        query = session.get("pending_query")
+        enabled_dbs = session.get("pending_enabled_dbs")
+        search_method = session.get("pending_search_method")
+        
+        session.pop("refined_queries", None)
+        session.pop("pending_query", None)
+        session.pop("pending_additional_keywords", None)
+        session.pop("pending_enabled_dbs", None)
+        session.pop("pending_search_method", None)
+        
+        return redirect(url_for(
+            f"{search_method}_results",
+            query=query,
+            pubmed="on" if "pubmed" in enabled_dbs else None,
+            europe="on" if "europe" in enabled_dbs else None,
+            scopus="on" if "scopus" in enabled_dbs else None,
+            springer="on" if "springer" in enabled_dbs else None
+        ))
+    else:
+        query = session.get("pending_query")
+        enabled_dbs = session.get("pending_enabled_dbs")
+        additional_keywords = session.get("pending_additional_keywords", "")
+        
+        if not query or not enabled_dbs:
+            return redirect(url_for("index"))
+        
+        session.pop("refined_queries", None) # Clear
+        refined_queries = refine_db_queries(query, additional_keywords)
+        session["refined_queries"] = refined_queries
+        
+        filtered_refined = {db: refined_queries[db] for db in enabled_dbs if db in refined_queries}
+        return render_template("confirm.html", refined_queries=filtered_refined, query=query, additional_keywords=additional_keywords)
 
 @app.route("/vector-results")
 def vector_results():
@@ -66,8 +133,13 @@ def vector_results():
         enabled_dbs.append("springer")
         
     query_results = run_vector_query(query, query, enabled_dbs)
-        
-    return render_template("vector_results.html", results=query_results, query=query, total=len(query_results))
+    refined_queries = session.get("refined_queries", {})
+    
+    # Store vector results into session for CSV export
+    cache_key = save_to_shelve(query_results)
+    session["vector_results_key"] = cache_key
+
+    return render_template("vector_results.html", results=query_results, query=query, total=len(query_results), refined_queries=refined_queries)
 
 @app.route("/llm-results")
 def llm_results():
@@ -83,7 +155,42 @@ def llm_results():
         enabled_dbs.append("springer")
         
     query_results = run_gemini_query(query, enabled_dbs)
-    return render_template("llm_results.html", results=query_results, query=query, total=len(query_results))
+    refined_queries = session.get("refined_queries", {})
+    
+    cache_key = save_to_shelve(query_results)
+    session["llm_results_key"] = cache_key
+
+    return render_template("llm_results.html", results=query_results, query=query, total=len(query_results), refined_queries=refined_queries)
+
+@app.route("/export_csv")
+def export_csv():
+    # Look for the cached key in session; try LLM results first, then vector
+    cache_key = session.get("llm_results_key") or session.get("vector_results_key")
+    if not cache_key:
+         return "No search results available to export.", 400
+
+    search_results = load_from_shelve(cache_key)
+    if not search_results:
+         return "No cached search results found.", 400
+
+    output = io.StringIO()
+    fieldnames = ["source", "Year", "title", "doi", "authors"]
+    writer = csv.DictWriter(output, fieldnames=fieldnames)
+    writer.writeheader()
+    for result in search_results:
+        writer.writerow({
+           "source": result.get("source", ""),
+           "Year": result.get("Year", ""),
+           "title": result.get("title", ""),
+           "doi": result.get("doi", ""),
+           "authors": result.get("authors", "")
+        })
+    csv_data = output.getvalue()
+    output.close()
+    
+    delete_from_shelve(cache_key)
+
+    return Response(csv_data, mimetype="text/csv", headers={"Content-Disposition":"attachment;filename=search_results.csv"})
 
 @app.route("/extraction")
 def extraction_results():
@@ -241,25 +348,27 @@ def compare_extractions():
     
     prompt = (
         "You are given aggregated extraction data from multiple research papers. Each extraction includes the paper's title, statistics, key points, and summary. "
-        "Based on the aggregated data below, generate comparative insights in JSON format with the following keys:\n"
-        "  - 'paper_titles': an array of all paper titles included in the aggregated data (exclude any with N/A as the summary).\n"
-        "  - 'similarities': a detailed description of the similarities observed across the papers.\n"
-        "  - 'differences': a detailed description of the differences observed across the papers.\n"
-        "  - 'correlations': a description of any correlations or relationships between the statistics and key points, and what this found relationship means.\n"
+        "Assign a unique reference number to each paper in the aggregated data (for example, [1], [2], [3], etc.) and include a 'references' field in your output that maps each reference number to the corresponding paper title. "
+        "Then, based on the aggregated data below, generate comparative insights in JSON format with the following keys:\n"
+        "  - 'references': a mapping of reference numbers to paper titles.\n"
+        "  - 'similarities': a very detailed description of the similarities observed across the papers, referring to them by their reference numbers (e.g., [1], [2]).\n"
+        "  - 'differences': a very detailed description of the differences observed across the papers, referring to them by their reference numbers.\n"
+        "  - 'correlations': a very description of any correlations or relationships between the statistics and key points, with references to the papers by their numbers.\n"
         "  - 'summary': an overall brief summary of the comparative insights.\n\n"
         "The output must be valid JSON with the keys exactly as specified. For example:\n\n"
         "```\n"
         "{\n"
-        "  \"paper_titles\": [\"Paper Title 1\", \"Paper Title 2\", \"Paper Title 3\"],\n"
-        "  \"similarities\": \"Description of similarities across the papers, ensuring you reference paper titles where possible...\",\n"
-        "  \"differences\": \"Description of differences across the papers, ensuring you reference paper titles where possible...\",\n"
-        "  \"correlations\": \"Description of correlations and relationships between key points and statistics, ensuring you reference paper titles where possible...\",\n"
-        "  \"summary\": \"Overall comparative summary of the research papers.\"\n"
+        "  \"references\": {\"[1]\": \"Paper Title 1\", \"[2]\": \"Paper Title 2\", \"[3]\": \"Paper Title 3\"},\n"
+        "  \"similarities\": \"[1] and [2] both indicate ...\",\n"
+        "  \"differences\": \"[1] emphasises ... while [3] shows ...\",\n"
+        "  \"correlations\": \"Key points in [2] correlate with the statistics in [3] ...\",\n"
+        "  \"summary\": \"Overall, the research papers show ...\"\n"
         "}\n"
         "```\n\n"
         "Now, based on the following aggregated extraction data, generate the comparative insights (and only the insights itself):\n\n"
         + aggregated_text
     )
+
     
     print(prompt)
 
@@ -314,22 +423,24 @@ def manual_comparison():
                 aggregated_text += f"- {kp}\n"
             aggregated_text += f"Summary: {ext.get('summary', '')}\n\n"
         
+        # Updated prompt: force the output to include a "references" field
         prompt = (
             "You are given aggregated extraction data from multiple research papers. Each extraction includes the paper's title, statistics, key points, and summary. "
-            "Based on the aggregated data below, generate comparative insights in JSON format with the following keys:\n"
-            "  - 'paper_titles': an array of all paper titles included in the aggregated data (exclude any with N/A as the summary).\n"
-            "  - 'similarities': a detailed description of the similarities observed across the papers.\n"
-            "  - 'differences': a detailed description of the differences observed across the papers.\n"
-            "  - 'correlations': a description of any correlations or relationships between the statistics and key points, and what this found relationship means.\n"
+            "Assign a unique reference number to each paper in the aggregated data (for example, [1], [2], [3], etc.) and include a 'references' field in your output that maps each reference number to the corresponding paper title. "
+            "Then, based on the aggregated data below, generate comparative insights in JSON format with the following keys:\n"
+            "  - 'references': a mapping of reference numbers to paper titles.\n"
+            "  - 'similarities': a very detailed description of the similarities observed across the papers, referring to them by their reference numbers (e.g., [1], [2]).\n"
+            "  - 'differences': a very detailed description of the differences observed across the papers, referring to them by their reference numbers.\n"
+            "  - 'correlations': a description of any correlations or relationships between the statistics and key points, with references to the papers by their numbers.\n"
             "  - 'summary': an overall brief summary of the comparative insights.\n\n"
             "The output must be valid JSON with the keys exactly as specified. For example:\n\n"
             "```\n"
             "{\n"
-            "  \"paper_titles\": [\"Paper Title 1\", \"Paper Title 2\", \"Paper Title 3\"],\n"
-            "  \"similarities\": \"Description of similarities across the papers, ensuring you reference paper titles where possible...\",\n"
-            "  \"differences\": \"Description of differences across the papers, ensuring you reference paper titles where possible...\",\n"
-            "  \"correlations\": \"Description of correlations between key points and statistics, ensuring you reference paper titles where possible...\",\n"
-            "  \"summary\": \"Overall comparative summary of the research papers.\"\n"
+            "  \"references\": {\"[1]\": \"Paper Title 1\", \"[2]\": \"Paper Title 2\", \"[3]\": \"Paper Title 3\"},\n"
+            "  \"similarities\": \"[1] and [2] both indicate ...\",\n"
+            "  \"differences\": \"[1] emphasises ... while [3] shows ...\",\n"
+            "  \"correlations\": \"Key points in [2] correlate with the statistics in [3] ...\",\n"
+            "  \"summary\": \"Overall, the research papers show ...\"\n"
             "}\n"
             "```\n\n"
             "Now, based on the following aggregated extraction data, generate the comparative insights (and only the insights itself):\n\n"
@@ -354,47 +465,76 @@ def manual_comparison():
     else:
         return render_template("manual_comparison.html")
 
+
 # Helper function to parse names into "first_name" "last_name" for Mendeley export
 def parse_authors(authors_str):
-    authors_list = []
-    for author in authors_str.split(","):
-        name = author.strip()
-        if not name:
-            continue
-        parts = name.split(" ")
-        if len(parts) >= 2:
-            first_name = parts[0]
-            last_name = " ".join(parts[1:]).strip()
+    # Use semicolon delimiter if present
+    if ";" in authors_str:
+        author_entries = [entry.strip() for entry in authors_str.split(";") if entry.strip()]
+    else:
+        # Otherwise, check if the string is in "Lastname, Firstname" format.
+        # If there is at least one comma inside each author segment, we assume that.
+        # For example, if the string looks like "Smith, John; Doe, Jane", we expect a comma.
+        # But if there are no semicolons, sometimes authors are simply separated by commas.
+        # In that case, we try to pair adjacent items if the number of splits is even.
+        parts = [part.strip() for part in authors_str.split(",") if part.strip()]
+        if len(parts) % 2 == 0:
+            # Assume that each pair is LastName followed by FirstName.
+            author_entries = []
+            for i in range(0, len(parts), 2):
+                # Combine as "FirstName LastName"
+                author_entries.append(f"{parts[i+1]} {parts[i]}")
         else:
-            # Provide a placeholder if no last name is found
-            first_name = name
-            last_name = "Unknown"
-        # Only add the author if last_name is non-empty
-        if last_name:
-            authors_list.append({
-                "first_name": first_name,
-                "last_name": last_name
-            })
+            # Otherwise, assume names are separated by commas and split on whitespace.
+            author_entries = [entry.strip() for entry in authors_str.split(",") if entry.strip()]
+    
+    authors_list = []
+    for entry in author_entries:
+        if not entry:
+            continue
+        # Try to detect if entry is in "Lastname, Firstname" format:
+        if "," in entry:
+            subparts = [sub.strip() for sub in entry.split(",")]
+            last_name = subparts[0] if subparts[0] else "Unknown"
+            first_name = subparts[1] if len(subparts) > 1 and subparts[1] else "Unknown"
+        else:
+            parts = entry.split()
+            if len(parts) >= 2:
+                first_name = parts[0]
+                last_name = " ".join(parts[1:]).strip()
+            else:
+                first_name = parts[0]
+                last_name = "Unknown"
+        authors_list.append({
+            "first_name": first_name if first_name else "Unknown",
+            "last_name": last_name if last_name else "Unknown"
+        })
     return authors_list
+
 
 
 @app.route("/mendeley/export")
 def mendeley_export():
     access_token = session.get("mendeley_token")
+    
     doi = request.args.get("doi")
     title = request.args.get("title")
     authors_str = request.args.get("authors")
-    # Convert authors string into a list of objects
+    
+    if not doi or not title or not authors_str:
+        export_data = session.get("mendeley_export_data", {})
+        doi = doi or export_data.get("doi")
+        title = title or export_data.get("title")
+        authors_str = authors_str or export_data.get("authors")
+    
     authors_data = parse_authors(authors_str) if authors_str else []
     
     if not access_token:
-        # Save export data in session so that after authentication the export can retry
         session["mendeley_export_data"] = {
             "doi": doi,
             "title": title,
             "authors": authors_str
         }
-        # Redirect to mendeley_link to initiate OAuth in this tab
         return redirect(url_for("mendeley_link"))
     
     citation_payload = {
@@ -414,14 +554,22 @@ def mendeley_export():
     
     response = requests.post("https://api.mendeley.com/documents", headers=headers, json=citation_payload)
     
+    if response.status_code == 401:  # Expired token/Unauthorised.
+        session.pop("mendeley_token", None)
+        session["mendeley_export_data"] = {
+            "doi": doi,
+            "title": title,
+            "authors": authors_str
+        }
+        return redirect(url_for("mendeley_link"))
+    
     if response.status_code == 201:
         status = "success"
         message = "Export successful."
     else:
         status = "error"
-        message = "Failed to export citation: " + response.text.replace("\n", " ")
+        message = "Failed to export citation: " + response.text.replace("\n", " ") + ". Please try again."
     
-    # Return HTML that sends a message to the parent window and then closes this tab.
     html = f"""
     <html>
       <body>
@@ -437,11 +585,110 @@ def mendeley_export():
     """
     return html
 
+@app.route("/mendeley/export_all", methods=["GET", "POST"])
+def mendeley_export_all():
+    access_token = session.get("mendeley_token")
+    # If not authenticated, store citations in session and redirect for auth.
+    if not access_token:
+        # For GET requests, citations should be passed in the URL.
+        # If not found, also check session.
+        citations_param = request.args.get("citations")
+        if citations_param:
+            try:
+                citations = json.loads(citations_param)
+            except Exception as e:
+                return jsonify({"error": "Failed to decode citations: " + str(e)}), 400
+        else:
+            citations = None
+        
+        if not citations:
+            # If no citations in URL, assume they are being exported now and store an empty list (or use your existing export all data)
+            # You need to decide how to pass the citations from your client.
+            return jsonify({"error": "No citations provided"}), 400
+        
+        # Store the citations in session for later export
+        session["mendeley_export_all_data"] = citations
+        # Redirect to authentication and pass next=export_all
+        return redirect(url_for("mendeley_link", next="export_all"))
+    
+    # For authenticated users, try to get citations either from URL (for GET) or from session.
+    if request.method == "GET":
+        citations_param = request.args.get("citations")
+        if citations_param:
+            try:
+                citations = json.loads(citations_param)
+            except Exception as e:
+                return jsonify({"error": "Failed to decode citations: " + str(e)}), 400
+        else:
+            citations = session.get("mendeley_export_all_data")
+            if not citations:
+                return jsonify({"error": "No citations provided"}), 400
+    else:  # POST
+        citations = request.get_json()
+        if not citations:
+            return jsonify({"error": "No citations provided"}), 400
+
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Content-Type": "application/vnd.mendeley-document.1+json"
+    }
+    
+    # Process each citation. (Note: the loop below should really accumulate results.
+    # Here we simply send back the response for the last citation.)
+    for citation in citations:
+        doi = citation.get("doi")
+        title = citation.get("title")
+        authors = parse_authors(citation.get("authors", ""))
+        payload = {
+            "title": title,
+            "authors": authors,
+            "identifiers": {"doi": doi},
+            "type": "generic"
+        }
+        
+        response = requests.post("https://api.mendeley.com/documents", headers=headers, json=payload)
+        
+        if response.status_code == 401:  # Expired token/Unauthorized.
+            session.pop("mendeley_token", None)
+            session["mendeley_export_all_data"] = citations
+            return redirect(url_for("mendeley_link", next="export_all"))
+        
+        # Optionally, collect successes and failures for each citation.
+        # For simplicity, here we only check the last response.
+        if response.status_code == 201:
+            status = "success"
+            message = "Export successful."
+        else:
+            status = "error"
+            message = "Failed to export citation: " + response.text.replace("\n", " ") + ". Please try again."
+    
+    # Clear the export-all data from session after successful export (optional).
+    session.pop("mendeley_export_all_data", None)
+    
+    html = f"""
+    <html>
+    <body>
+        <script>
+        if (window.opener && !window.opener.closed) {{
+            window.opener.postMessage({{'status': '{status}', 'message': '{message}'}}, "*");
+        }}
+        window.close();
+        </script>
+        <p>{message} You can close this window.</p>
+    </body>
+    </html>
+    """
+    return html
+
+
 @app.route("/mendeley/link")
 def mendeley_link():
     state = str(uuid.uuid4())
     session["mendeley_state"] = state
-    # (Optional) Log next parameters if needed for debugging.
+    # If a next parameter is provided, store it in session
+    next_endpoint = request.args.get("next")
+    if next_endpoint:
+        session["next"] = next_endpoint
     params = {
         "client_id": MENDELEY_CLIENT_ID,
         "redirect_uri": MENDELEY_REDIRECT_URI,
@@ -451,7 +698,6 @@ def mendeley_link():
     }
     auth_url = requests.Request('GET', MENDELEY_AUTH_URL, params=params).prepare().url
     print(f"Redirecting to auth: {auth_url}")
-    
     return redirect(auth_url)
 
 @app.route("/mendeley/callback")
@@ -498,8 +744,53 @@ def mendeley_callback():
           </body>
         </html>
         """
-        return html
+        return html@app.route("/mendeley/callback")
+
+def mendeley_callback():
+    code = request.args.get("code")
+    state = request.args.get("state")
+    if state != session.get("mendeley_state"):
+        return "State mismatch. Please try again.", 400
+
+    data = {
+        "grant_type": "authorization_code",
+        "code": code,
+        "redirect_uri": MENDELEY_REDIRECT_URI,
+        "client_id": MENDELEY_CLIENT_ID,
+        "client_secret": MENDELEY_CLIENT_SECRET
+    }
+    token_response = requests.post(MENDELEY_TOKEN_URL, data=data)
+    if token_response.status_code != 200:
+        return "Error obtaining access token.", token_response.status_code
+
+    token_data = token_response.json()
+    session["mendeley_token"] = token_data.get("access_token")
     
+    # Check for the "next" endpoint stored in session:
+    next_endpoint = session.pop("next", None)
+    if next_endpoint == "export_all":
+        # Redirect to the export all endpoint.
+        return redirect(url_for("mendeley_export_all"))
+    elif "mendeley_export_data" in session:
+        # For single citation export.
+        return redirect(url_for("mendeley_export"))
+    else:
+        # Otherwise, just notify success.
+        html = """
+        <html>
+          <body>
+            <script>
+              if (window.opener && !window.opener.closed) {
+                window.opener.postMessage({status: 'success', message: 'Mendeley authentication successful.'}, "*");
+              }
+              window.close();
+            </script>
+            <p>Authentication successful! You can close this window.</p>
+          </body>
+        </html>
+        """
+        return html
+
 @app.route("/mendeley/export_retry")
 def mendeley_export_retry():
     export_data = session.pop("mendeley_export_data", None)
@@ -515,9 +806,15 @@ def mendeley_export_retry():
     authors = export_data.get("authors")
     next_url = export_data.get("next") or url_for("index")
     
+    # Check if authors is a list; if not, split the string.
+    if isinstance(authors, list):
+        authors_list = authors
+    else:
+        authors_list = authors.split(",") if authors else []
+    
     citation_payload = {
         "title": title,
-        "authors": authors.split(",") if authors else [],
+        "authors": authors_list,
         "identifiers": {
             "doi": doi
         },
@@ -569,7 +866,8 @@ def run_vector_query(search_query, chroma_query, enabled_dbs):
             "authors": metadatas[i].get("authors"),
             "document": doc_text,
             "doi_suffix": metadatas[i].get("doi_suffix"),
-            "PMCID": metadatas[i].get("PMCID")
+            "PMCID": metadatas[i].get("PMCID"),
+            "Year": metadatas[i].get("Year")
         })
     
     print(f"Found {len(query_results)} similar papers.")
@@ -613,6 +911,7 @@ def run_gemini_query(search_query, enabled_dbs):
         paper["abstract"] = paper.get("Abstract")
         paper["source"] = paper.get("Source")
         paper["authors"] = paper.get("Authors")
+        paper["Year"] = paper.get("Year")
         paper["explanation"] = explanation
         final_results.append(paper)
     

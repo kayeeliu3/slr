@@ -51,7 +51,8 @@ def index_papers(papers):
             "source": paper.get("Source", ""),
             "authors": paper.get("Authors", ""),
             "doi_suffix": paper.get("doi_suffix", ""),
-            "PMCID": paper.get("PMCID", "")
+            "PMCID": paper.get("PMCID", ""),
+            "Year": paper.get("Year", "")
         }
         new_metadatas.append(metadata)
     
